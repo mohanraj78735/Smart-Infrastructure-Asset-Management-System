@@ -10,6 +10,7 @@ from email.mime.text import MIMEText
 conn = sqlite3.connect("database.db", check_same_thread=False)
 cursor = conn.cursor()
 
+# Tables
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS assets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -34,14 +35,42 @@ CREATE TABLE IF NOT EXISTS maintenance (
 
 conn.commit()
 
-# ---------------- EMAIL FUNCTION ----------------
-def send_email(message):
+# ---------------- SAMPLE DATA (RUN ONCE) ----------------
+def insert_sample_data():
+    cursor.execute("SELECT COUNT(*) FROM assets")
+    if cursor.fetchone()[0] == 0:
+        data = [
+            ("Desktop Computer","IT",15,"Working","Lab 1"),
+            ("Keyboard","IT",2,"Working","Lab 1"),
+            ("Mouse","IT",1,"Working","Lab 2"),
+            ("Monitor","IT",8,"Working","Lab 1"),
+            ("Printer","IT",1,"Not Working","Lab 1"),
+            ("Scanner","IT",3,"Working","Lab 2"),
+            ("UPS","IT",4,"Working","Lab 1"),
+            ("Ceiling Fan","Electrical",6,"Working","Lab 1"),
+            ("LED Light","Electrical",1,"Working","Lab 2"),
+            ("Air Conditioner","Electrical",2,"Working","Lab 1"),
+            ("Chair","Furniture",25,"Working","Lab 1"),
+            ("Table","Furniture",12,"Working","Lab 2"),
+            ("Projector Table","Furniture",1,"Working","Lab 1")
+        ]
+        for d in data:
+            cursor.execute("""
+            INSERT INTO assets (name, category, quantity, status, location, date_added)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """, (d[0], d[1], d[2], d[3], d[4], str(datetime.now())))
+        conn.commit()
+
+insert_sample_data()
+
+# ---------------- EMAIL ----------------
+def send_email(msg_text):
     try:
         sender = "your_email@gmail.com"
         password = "your_app_password"
-        receiver = "receiver_email@gmail.com"
+        receiver = "receiver@gmail.com"
 
-        msg = MIMEText(message)
+        msg = MIMEText(msg_text)
         msg['Subject'] = "Lab Alert 🚨"
         msg['From'] = sender
         msg['To'] = receiver
@@ -54,166 +83,145 @@ def send_email(message):
     except:
         pass
 
-# ---------------- LOGIN SYSTEM ----------------
+# ---------------- LOGIN ----------------
 users = {
     "admin": {"password": "123", "role": "admin"},
     "hod": {"password": "123", "role": "hod"},
     "principal": {"password": "123", "role": "principal"}
 }
 
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
+if "login" not in st.session_state:
+    st.session_state.login = False
 
-if not st.session_state.logged_in:
+if not st.session_state.login:
     st.title("🔐 Login")
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
+    u = st.text_input("Username")
+    p = st.text_input("Password", type="password")
 
     if st.button("Login"):
-        if username in users and users[username]["password"] == password:
-            st.session_state.logged_in = True
-            st.session_state.role = users[username]["role"]
-            st.success("Login Successful")
+        if u in users and users[u]["password"] == p:
+            st.session_state.login = True
+            st.session_state.role = users[u]["role"]
             st.rerun()
         else:
-            st.error("Invalid Credentials")
+            st.error("Invalid login")
     st.stop()
 
-# ---------------- ROLE ----------------
 role = st.session_state.role
 
 # ---------------- MENU ----------------
 if role == "admin":
-    menu = ["Dashboard", "Add Asset", "View Assets", "Maintenance"]
+    menu = ["Dashboard","Add Asset","View Assets","Maintenance"]
 elif role == "hod":
-    menu = ["Dashboard", "View Assets", "Maintenance"]
+    menu = ["Dashboard","View Assets","Maintenance"]
 else:
     menu = ["Dashboard"]
 
 choice = st.sidebar.selectbox("Menu", menu)
 
 if st.sidebar.button("Logout"):
-    st.session_state.logged_in = False
+    st.session_state.login = False
     st.rerun()
 
-st.title("💻 IT Lab Stock Management System")
+st.title("💻 IT Lab Stock Management")
 
 # ---------------- DASHBOARD ----------------
 if choice == "Dashboard":
-    st.subheader("📊 Dashboard")
-
     df = pd.read_sql("SELECT * FROM assets", conn)
 
     if not df.empty:
-        total = len(df)
-        working = len(df[df["status"] == "Working"])
-        not_working = len(df[df["status"] == "Not Working"])
+        st.subheader("📊 Dashboard")
 
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Total Assets", total)
-        col2.metric("Working", working)
-        col3.metric("Not Working", not_working)
+        col1,col2,col3 = st.columns(3)
+        col1.metric("Total", len(df))
+        col2.metric("Working", len(df[df["status"]=="Working"]))
+        col3.metric("Not Working", len(df[df["status"]=="Not Working"]))
 
-        # BLINK ALERT
+        # Blink CSS
         st.markdown("""
         <style>
-        @keyframes blink {50% {opacity: 0;}}
+        @keyframes blink {50% {opacity:0;}}
         .blink {color:red; animation: blink 1s infinite;}
         </style>
         """, unsafe_allow_html=True)
 
-        for i, row in df.iterrows():
+        for _,row in df.iterrows():
             if row["quantity"] < 2:
                 st.markdown(f"<p class='blink'>⚠️ Low Stock: {row['name']}</p>", unsafe_allow_html=True)
                 send_email(f"Low Stock Alert: {row['name']}")
 
-        fig, ax = plt.subplots()
+        fig,ax = plt.subplots()
         df["category"].value_counts().plot(kind="bar", ax=ax)
         st.pyplot(fig)
 
-    else:
-        st.warning("No Data")
-
-# ---------------- ADD ASSET ----------------
-elif choice == "Add Asset" and role == "admin":
+# ---------------- ADD ----------------
+elif choice == "Add Asset" and role=="admin":
     st.subheader("➕ Add Asset")
-
     name = st.text_input("Name")
-    category = st.selectbox("Category", ["IT", "Electrical", "Furniture"])
-    quantity = st.number_input("Quantity", min_value=1)
-    status = st.selectbox("Status", ["Working", "Not Working"])
-    location = st.text_input("Location")
+    cat = st.selectbox("Category",["IT","Electrical","Furniture"])
+    qty = st.number_input("Quantity",1)
+    status = st.selectbox("Status",["Working","Not Working"])
+    loc = st.text_input("Location")
 
     if st.button("Add"):
         cursor.execute("""
-        INSERT INTO assets (name, category, quantity, status, location, date_added)
-        VALUES (?, ?, ?, ?, ?, ?)
-        """, (name, category, quantity, status, location, str(datetime.now())))
+        INSERT INTO assets (name,category,quantity,status,location,date_added)
+        VALUES (?,?,?,?,?,?)
+        """,(name,cat,qty,status,loc,str(datetime.now())))
         conn.commit()
-        st.success("Added Successfully")
+        st.success("Added")
 
-# ---------------- VIEW ASSETS ----------------
+# ---------------- VIEW ----------------
 elif choice == "View Assets":
-    st.subheader("📋 Assets")
-
     df = pd.read_sql("SELECT * FROM assets", conn)
+    st.dataframe(df)
 
-    if not df.empty:
-        st.dataframe(df)
+    if role=="admin":
+        st.subheader("Update")
+        i = st.number_input("ID",1)
+        ns = st.selectbox("Status",["Working","Not Working"])
+        nq = st.number_input("Qty",0)
 
-        if role == "admin":
-            st.subheader("✏️ Update")
-            id_update = st.number_input("ID", min_value=1)
-            new_status = st.selectbox("Status", ["Working", "Not Working"])
-            new_qty = st.number_input("Quantity", min_value=0)
+        if st.button("Update"):
+            cursor.execute("UPDATE assets SET status=?,quantity=? WHERE id=?",(ns,nq,i))
+            conn.commit()
+            st.success("Updated")
 
-            if st.button("Update"):
-                cursor.execute("UPDATE assets SET status=?, quantity=? WHERE id=?",
-                               (new_status, new_qty, id_update))
-                conn.commit()
-                st.success("Updated")
+        st.subheader("Delete")
+        d = st.number_input("Delete ID",1)
 
-            st.subheader("🗑️ Delete")
-            id_del = st.number_input("Delete ID", min_value=1)
-
-            if st.button("Delete"):
-                cursor.execute("DELETE FROM assets WHERE id=?", (id_del,))
-                conn.commit()
-                st.success("Deleted")
+        if st.button("Delete"):
+            cursor.execute("DELETE FROM assets WHERE id=?",(d,))
+            conn.commit()
+            st.success("Deleted")
 
 # ---------------- MAINTENANCE ----------------
 elif choice == "Maintenance":
-    st.subheader("🛠️ Maintenance")
-
     df = pd.read_sql("SELECT * FROM assets", conn)
 
-    if not df.empty:
-        asset_ids = df["id"].tolist()
+    if role=="hod":
+        st.subheader("📢 Complaint")
+        aid = st.selectbox("Asset ID", df["id"])
+        issue = st.text_input("Issue")
 
-        if role == "hod":
-            st.subheader("📢 Raise Complaint")
-            asset_id = st.selectbox("Asset ID", asset_ids)
-            issue = st.text_input("Issue")
+        if st.button("Submit"):
+            cursor.execute("""
+            INSERT INTO maintenance (asset_id,issue,status,date_reported)
+            VALUES (?,?,?,?)
+            """,(aid,issue,"Pending",str(datetime.now())))
+            conn.commit()
+            send_email(f"Complaint for Asset {aid}: {issue}")
+            st.success("Sent")
 
-            if st.button("Submit"):
-                cursor.execute("""
-                INSERT INTO maintenance (asset_id, issue, status, date_reported)
-                VALUES (?, ?, ?, ?)
-                """, (asset_id, issue, "Pending", str(datetime.now())))
-                conn.commit()
-                send_email(f"Complaint for Asset {asset_id}: {issue}")
-                st.success("Complaint Sent")
+    st.subheader("📋 Records")
+    mdf = pd.read_sql("SELECT * FROM maintenance", conn)
+    st.dataframe(mdf)
 
-        st.subheader("📋 Records")
-        mdf = pd.read_sql("SELECT * FROM maintenance", conn)
-        st.dataframe(mdf)
+    if role=="admin":
+        mid = st.number_input("Maintenance ID",1)
+        stat = st.selectbox("Status",["Pending","Completed"])
 
-        if role == "admin":
-            mid = st.number_input("Maintenance ID", min_value=1)
-            new_status = st.selectbox("Update Status", ["Pending", "Completed"])
-
-            if st.button("Update Status"):
-                cursor.execute("UPDATE maintenance SET status=? WHERE id=?",
-                               (new_status, mid))
-                conn.commit()
-                st.success("Updated")
+        if st.button("Update"):
+            cursor.execute("UPDATE maintenance SET status=? WHERE id=?",(stat,mid))
+            conn.commit()
+            st.success("Updated")
