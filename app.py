@@ -3,12 +3,13 @@ import sqlite3
 import pandas as pd
 import matplotlib.pyplot as plt
 from datetime import datetime
+import smtplib
+from email.mime.text import MIMEText
 
 # ---------------- DATABASE ----------------
 conn = sqlite3.connect("database.db", check_same_thread=False)
 cursor = conn.cursor()
 
-# Create tables
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS assets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -33,12 +34,69 @@ CREATE TABLE IF NOT EXISTS maintenance (
 
 conn.commit()
 
-# ---------------- UI ----------------
-st.set_page_config(page_title="Smart Infrastructure Management", layout="wide")
-st.title("🏗️ Smart Infrastructure & Asset Management System")
+# ---------------- EMAIL FUNCTION ----------------
+def send_email(message):
+    try:
+        sender = "your_email@gmail.com"
+        password = "your_app_password"
+        receiver = "receiver_email@gmail.com"
 
-menu = ["Dashboard", "Add Asset", "View Assets", "Maintenance"]
+        msg = MIMEText(message)
+        msg['Subject'] = "Lab Alert 🚨"
+        msg['From'] = sender
+        msg['To'] = receiver
+
+        server = smtplib.SMTP("smtp.gmail.com", 587)
+        server.starttls()
+        server.login(sender, password)
+        server.send_message(msg)
+        server.quit()
+    except:
+        pass
+
+# ---------------- LOGIN SYSTEM ----------------
+users = {
+    "admin": {"password": "123", "role": "admin"},
+    "hod": {"password": "123", "role": "hod"},
+    "principal": {"password": "123", "role": "principal"}
+}
+
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+
+if not st.session_state.logged_in:
+    st.title("🔐 Login")
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
+
+    if st.button("Login"):
+        if username in users and users[username]["password"] == password:
+            st.session_state.logged_in = True
+            st.session_state.role = users[username]["role"]
+            st.success("Login Successful")
+            st.rerun()
+        else:
+            st.error("Invalid Credentials")
+    st.stop()
+
+# ---------------- ROLE ----------------
+role = st.session_state.role
+
+# ---------------- MENU ----------------
+if role == "admin":
+    menu = ["Dashboard", "Add Asset", "View Assets", "Maintenance"]
+elif role == "hod":
+    menu = ["Dashboard", "View Assets", "Maintenance"]
+else:
+    menu = ["Dashboard"]
+
 choice = st.sidebar.selectbox("Menu", menu)
+
+if st.sidebar.button("Logout"):
+    st.session_state.logged_in = False
+    st.rerun()
+
+st.title("💻 IT Lab Stock Management System")
 
 # ---------------- DASHBOARD ----------------
 if choice == "Dashboard":
@@ -56,67 +114,72 @@ if choice == "Dashboard":
         col2.metric("Working", working)
         col3.metric("Not Working", not_working)
 
-        st.subheader("Category Distribution")
+        # BLINK ALERT
+        st.markdown("""
+        <style>
+        @keyframes blink {50% {opacity: 0;}}
+        .blink {color:red; animation: blink 1s infinite;}
+        </style>
+        """, unsafe_allow_html=True)
+
+        for i, row in df.iterrows():
+            if row["quantity"] < 2:
+                st.markdown(f"<p class='blink'>⚠️ Low Stock: {row['name']}</p>", unsafe_allow_html=True)
+                send_email(f"Low Stock Alert: {row['name']}")
+
         fig, ax = plt.subplots()
         df["category"].value_counts().plot(kind="bar", ax=ax)
         st.pyplot(fig)
+
     else:
-        st.warning("No data available")
+        st.warning("No Data")
 
 # ---------------- ADD ASSET ----------------
-elif choice == "Add Asset":
-    st.subheader("➕ Add New Asset")
+elif choice == "Add Asset" and role == "admin":
+    st.subheader("➕ Add Asset")
 
-    name = st.text_input("Asset Name")
+    name = st.text_input("Name")
     category = st.selectbox("Category", ["IT", "Electrical", "Furniture"])
     quantity = st.number_input("Quantity", min_value=1)
     status = st.selectbox("Status", ["Working", "Not Working"])
     location = st.text_input("Location")
 
-    if st.button("Add Asset"):
+    if st.button("Add"):
         cursor.execute("""
         INSERT INTO assets (name, category, quantity, status, location, date_added)
         VALUES (?, ?, ?, ?, ?, ?)
         """, (name, category, quantity, status, location, str(datetime.now())))
         conn.commit()
-        st.success("Asset Added Successfully!")
+        st.success("Added Successfully")
 
 # ---------------- VIEW ASSETS ----------------
 elif choice == "View Assets":
-    st.subheader("📋 Asset List")
+    st.subheader("📋 Assets")
 
     df = pd.read_sql("SELECT * FROM assets", conn)
 
     if not df.empty:
-        for i, row in df.iterrows():
-            if row["quantity"] < 2:
-                st.warning(f"Low Stock: {row['name']}")
-
         st.dataframe(df)
 
-        st.subheader("✏️ Update Asset")
-        id_update = st.number_input("Enter Asset ID to Update", min_value=1)
+        if role == "admin":
+            st.subheader("✏️ Update")
+            id_update = st.number_input("ID", min_value=1)
+            new_status = st.selectbox("Status", ["Working", "Not Working"])
+            new_qty = st.number_input("Quantity", min_value=0)
 
-        new_status = st.selectbox("New Status", ["Working", "Not Working"])
-        new_quantity = st.number_input("New Quantity", min_value=0)
+            if st.button("Update"):
+                cursor.execute("UPDATE assets SET status=?, quantity=? WHERE id=?",
+                               (new_status, new_qty, id_update))
+                conn.commit()
+                st.success("Updated")
 
-        if st.button("Update"):
-            cursor.execute("""
-            UPDATE assets SET status=?, quantity=? WHERE id=?
-            """, (new_status, new_quantity, id_update))
-            conn.commit()
-            st.success("Updated Successfully!")
+            st.subheader("🗑️ Delete")
+            id_del = st.number_input("Delete ID", min_value=1)
 
-        st.subheader("🗑️ Delete Asset")
-        id_delete = st.number_input("Enter Asset ID to Delete", min_value=1)
-
-        if st.button("Delete"):
-            cursor.execute("DELETE FROM assets WHERE id=?", (id_delete,))
-            conn.commit()
-            st.success("Deleted Successfully!")
-
-    else:
-        st.warning("No assets found")
+            if st.button("Delete"):
+                cursor.execute("DELETE FROM assets WHERE id=?", (id_del,))
+                conn.commit()
+                st.success("Deleted")
 
 # ---------------- MAINTENANCE ----------------
 elif choice == "Maintenance":
@@ -127,30 +190,30 @@ elif choice == "Maintenance":
     if not df.empty:
         asset_ids = df["id"].tolist()
 
-        asset_id = st.selectbox("Select Asset ID", asset_ids)
-        issue = st.text_input("Issue Description")
+        if role == "hod":
+            st.subheader("📢 Raise Complaint")
+            asset_id = st.selectbox("Asset ID", asset_ids)
+            issue = st.text_input("Issue")
 
-        if st.button("Report Issue"):
-            cursor.execute("""
-            INSERT INTO maintenance (asset_id, issue, status, date_reported)
-            VALUES (?, ?, ?, ?)
-            """, (asset_id, issue, "Pending", str(datetime.now())))
-            conn.commit()
-            st.success("Issue Reported!")
+            if st.button("Submit"):
+                cursor.execute("""
+                INSERT INTO maintenance (asset_id, issue, status, date_reported)
+                VALUES (?, ?, ?, ?)
+                """, (asset_id, issue, "Pending", str(datetime.now())))
+                conn.commit()
+                send_email(f"Complaint for Asset {asset_id}: {issue}")
+                st.success("Complaint Sent")
 
-        st.subheader("📋 Maintenance Records")
+        st.subheader("📋 Records")
         mdf = pd.read_sql("SELECT * FROM maintenance", conn)
         st.dataframe(mdf)
 
-        update_id = st.number_input("Enter Maintenance ID", min_value=1)
-        new_status = st.selectbox("Update Status", ["Pending", "Completed"])
+        if role == "admin":
+            mid = st.number_input("Maintenance ID", min_value=1)
+            new_status = st.selectbox("Update Status", ["Pending", "Completed"])
 
-        if st.button("Update Maintenance"):
-            cursor.execute("""
-            UPDATE maintenance SET status=? WHERE id=?
-            """, (new_status, update_id))
-            conn.commit()
-            st.success("Maintenance Updated!")
-
-    else:
-        st.warning("Add assets first!")
+            if st.button("Update Status"):
+                cursor.execute("UPDATE maintenance SET status=? WHERE id=?",
+                               (new_status, mid))
+                conn.commit()
+                st.success("Updated")
